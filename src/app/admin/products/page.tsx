@@ -113,7 +113,7 @@ function ProductFormModal({
                 value={form.category}
                 onChange={(e) => setForm({ ...form, category: e.target.value })}
               >
-                {["DATA", "AIRTIME", "SMS", "OTHER"].map((c) => (
+                {["DATA", "AIRTIME", "SMS", "MINUTES", "OTHER"].map((c) => (
                   <option key={c}>{c}</option>
                 ))}
               </select>
@@ -125,9 +125,7 @@ function ProductFormModal({
               </label>
               <button
                 type="button"
-                onClick={() =>
-                  setForm({ ...form, is_active: !form.is_active })
-                }
+                onClick={() => setForm({ ...form, is_active: !form.is_active })}
                 className={`flex items-center gap-2 px-4 py-2.5 rounded-xl border text-sm font-medium transition-colors w-full ${
                   form.is_active
                     ? "bg-green-50 border-green-300 text-green-700"
@@ -153,9 +151,7 @@ function ProductFormModal({
                 min="1"
                 step="0.01"
                 value={form.selling_price}
-                onChange={(e) =>
-                  setForm({ ...form, selling_price: e.target.value })
-                }
+                onChange={(e) => setForm({ ...form, selling_price: e.target.value })}
                 placeholder="20.00"
               />
             </div>
@@ -170,9 +166,7 @@ function ProductFormModal({
                 min="0"
                 step="0.01"
                 value={form.cost_price}
-                onChange={(e) =>
-                  setForm({ ...form, cost_price: e.target.value })
-                }
+                onChange={(e) => setForm({ ...form, cost_price: e.target.value })}
                 placeholder="14.00"
               />
             </div>
@@ -181,15 +175,13 @@ function ProductFormModal({
               <label className="block text-sm font-medium text-gray-700 mb-1">
                 USSD Code Template *
                 <span className="font-normal text-gray-400 ml-1">
-                  (use {"{pn}"} as phone placeholder)
+                  (use {"{pn}"} or pn as phone placeholder)
                 </span>
               </label>
               <input
                 className="input font-mono"
                 value={form.ussd_code_template}
-                onChange={(e) =>
-                  setForm({ ...form, ussd_code_template: e.target.value })
-                }
+                onChange={(e) => setForm({ ...form, ussd_code_template: e.target.value })}
                 placeholder="*180*5*2*{pn}*1*1#"
               />
             </div>
@@ -202,9 +194,7 @@ function ProductFormModal({
                 className="input resize-none"
                 rows={2}
                 value={form.description}
-                onChange={(e) =>
-                  setForm({ ...form, description: e.target.value })
-                }
+                onChange={(e) => setForm({ ...form, description: e.target.value })}
                 placeholder="1GB valid for 24 hours"
               />
             </div>
@@ -233,9 +223,9 @@ function ProductFormModal({
   );
 }
 
-// ─── Bulk USSD JSON Upload Modal ───────────────────────────────────────────────
+// ─── Bulk Import Modal ─────────────────────────────────────────────────────────
 
-function BulkUssdModal({
+function BulkImportModal({
   onClose,
   onSaved,
 }: {
@@ -244,42 +234,45 @@ function BulkUssdModal({
 }) {
   const adminKey = getAdminKey();
   const fileRef = useRef<HTMLInputElement>(null);
-  const [jsonText, setJsonText] = useState(
-    JSON.stringify(
-      [
-        { id: 1, ussd_code_template: "*180*5*2*{pn}*1*1#" },
-        { id: 2, ussd_code_template: "*180*5*2*{pn}*2*1#" },
-      ],
-      null,
-      2
-    )
-  );
+  const [jsonText, setJsonText] = useState("");
   const [saving, setSaving] = useState(false);
-  const [result, setResult] = useState<{
-    updated: number;
-    total: number;
-    results: { id: number; success: boolean; error?: string }[];
-  } | null>(null);
+  const [previewCount, setPreviewCount] = useState<number | null>(null);
   const [error, setError] = useState("");
+  const [result, setResult] = useState<{
+    total: number;
+    updated: number;
+    inserted: number;
+    skipped: number;
+    results: { id: number; name: string; action: string; error?: string }[];
+  } | null>(null);
 
   const handleFile = (file: File) => {
     const reader = new FileReader();
-    reader.onload = (e) => setJsonText(e.target?.result as string);
+    reader.onload = (e) => {
+      const text = e.target?.result as string;
+      setJsonText(text);
+      setError("");
+      setResult(null);
+      try {
+        const parsed = JSON.parse(text);
+        setPreviewCount(Array.isArray(parsed) ? parsed.length : null);
+      } catch {
+        setPreviewCount(null);
+      }
+    };
     reader.readAsText(file);
-  };
-
-  const handleDrop = (e: React.DragEvent) => {
-    e.preventDefault();
-    const file = e.dataTransfer.files[0];
-    if (file) handleFile(file);
   };
 
   const handleSubmit = async () => {
     setError("");
-    let updates: unknown;
+    if (!jsonText.trim()) {
+      setError("Please upload a JSON file first.");
+      return;
+    }
+    let parsed: unknown;
     try {
-      updates = JSON.parse(jsonText);
-      if (!Array.isArray(updates)) throw new Error("JSON must be an array");
+      parsed = JSON.parse(jsonText);
+      if (!Array.isArray(parsed)) throw new Error("JSON must be an array");
     } catch (e) {
       setError("Invalid JSON: " + (e as Error).message);
       return;
@@ -292,7 +285,7 @@ function BulkUssdModal({
           "Content-Type": "application/json",
           "x-admin-key": adminKey,
         },
-        body: JSON.stringify({ updates }),
+        body: JSON.stringify(parsed),
       });
       const data = await res.json();
       if (!data.success) throw new Error(data.error);
@@ -305,14 +298,18 @@ function BulkUssdModal({
     }
   };
 
+  const skippedItems = result?.results.filter((r) => r.action === "skipped") ?? [];
+
   return (
     <div className="fixed inset-0 bg-black/50 backdrop-blur-sm z-50 flex items-center justify-center p-4">
-      <div className="bg-white rounded-2xl shadow-2xl w-full max-w-2xl">
-        <div className="p-6 border-b border-gray-100 flex items-center justify-between">
+      <div className="bg-white rounded-2xl shadow-2xl w-full max-w-2xl max-h-[90vh] flex flex-col">
+
+        {/* Header */}
+        <div className="p-6 border-b border-gray-100 flex items-center justify-between shrink-0">
           <div>
-            <h2 className="text-xl font-bold">Bulk Update USSD Codes</h2>
+            <h2 className="text-xl font-bold">Bulk Import Products</h2>
             <p className="text-sm text-gray-500">
-              Upload a JSON file or paste content below
+              Upload your Ray Tech APK export JSON — creates or updates all products at once
             </p>
           </div>
           <button onClick={onClose} className="text-gray-400 hover:text-gray-600">
@@ -320,49 +317,79 @@ function BulkUssdModal({
           </button>
         </div>
 
-        <div className="p-6 space-y-4">
+        {/* Body */}
+        <div className="p-6 space-y-4 overflow-y-auto flex-1">
+
           {error && (
-            <div className="bg-red-50 text-red-700 text-sm px-4 py-3 rounded-xl">
+            <div className="bg-red-50 text-red-700 text-sm px-4 py-3 rounded-xl flex items-center gap-2">
+              <AlertTriangle className="w-4 h-4 shrink-0" />
               {error}
             </div>
           )}
 
           {result && (
-            <div className="bg-green-50 border border-green-200 rounded-xl p-4 text-sm">
+            <div className="bg-green-50 border border-green-200 rounded-xl p-4 space-y-3">
               <p className="font-semibold text-green-700 flex items-center gap-2">
                 <CheckCircle className="w-4 h-4" />
-                Updated {result.updated} of {result.total} products
+                Import complete — {result.total} products processed
               </p>
-              {result.results.filter((r) => !r.success).length > 0 && (
-                <ul className="mt-2 space-y-1 text-red-600">
-                  {result.results
-                    .filter((r) => !r.success)
-                    .map((r) => (
-                      <li key={r.id}>
-                        ID {r.id}: {r.error}
-                      </li>
-                    ))}
-                </ul>
+              <div className="grid grid-cols-3 gap-3 text-sm text-center">
+                <div className="bg-white rounded-lg p-2 border border-green-100">
+                  <p className="text-2xl font-bold text-green-600">{result.updated}</p>
+                  <p className="text-gray-500 text-xs">Updated</p>
+                </div>
+                <div className="bg-white rounded-lg p-2 border border-blue-100">
+                  <p className="text-2xl font-bold text-blue-600">{result.inserted}</p>
+                  <p className="text-gray-500 text-xs">Inserted</p>
+                </div>
+                <div className="bg-white rounded-lg p-2 border border-red-100">
+                  <p className="text-2xl font-bold text-red-500">{result.skipped}</p>
+                  <p className="text-gray-500 text-xs">Skipped</p>
+                </div>
+              </div>
+              {skippedItems.length > 0 && (
+                <div className="text-sm text-red-600 space-y-1">
+                  <p className="font-semibold">Skipped items:</p>
+                  {skippedItems.map((r) => (
+                    <p key={r.id} className="font-mono text-xs">
+                      ID {r.id} &quot;{r.name}&quot;: {r.error}
+                    </p>
+                  ))}
+                </div>
               )}
             </div>
           )}
 
           {/* Drop zone */}
           <div
-            className="border-2 border-dashed border-gray-300 rounded-xl p-6 text-center cursor-pointer hover:border-brand-400 transition-colors"
+            className="border-2 border-dashed border-gray-300 rounded-xl p-8 text-center cursor-pointer hover:border-brand-400 hover:bg-brand-50 transition-colors"
             onDragOver={(e) => e.preventDefault()}
-            onDrop={handleDrop}
+            onDrop={(e) => {
+              e.preventDefault();
+              const file = e.dataTransfer.files[0];
+              if (file) handleFile(file);
+            }}
             onClick={() => fileRef.current?.click()}
           >
             <Upload className="w-8 h-8 text-gray-400 mx-auto mb-2" />
-            <p className="text-sm text-gray-500">
-              Drop a <strong>.json</strong> file here or{" "}
-              <span className="text-brand-600">click to browse</span>
-            </p>
+            {previewCount !== null ? (
+              <p className="text-sm font-semibold text-brand-700">
+                ✅ {previewCount} products loaded — ready to import
+              </p>
+            ) : (
+              <>
+                <p className="text-sm text-gray-600 font-medium">
+                  Drop your Ray Tech APK export <strong>.json</strong> here
+                </p>
+                <p className="text-xs text-gray-400 mt-1">
+                  or <span className="text-brand-600">click to browse</span>
+                </p>
+              </>
+            )}
             <input
               ref={fileRef}
               type="file"
-              accept=".json"
+              accept=".json,application/json"
               className="hidden"
               onChange={(e) => {
                 const file = e.target.files?.[0];
@@ -371,38 +398,79 @@ function BulkUssdModal({
             />
           </div>
 
-          <div>
-            <label className="block text-sm font-medium text-gray-700 mb-1">
-              JSON Content{" "}
-              <span className="text-gray-400 font-normal">
-                — array of {`{ id, ussd_code_template }`}
-              </span>
-            </label>
-            <textarea
-              className="input font-mono text-xs resize-none"
-              rows={10}
-              value={jsonText}
-              onChange={(e) => setJsonText(e.target.value)}
-            />
+          {/* Format reference */}
+          <div className="bg-gray-50 rounded-xl p-4">
+            <p className="text-xs font-semibold text-gray-500 uppercase tracking-wider mb-2">
+              Expected format (Ray Tech APK export)
+            </p>
+            <pre className="text-xs text-gray-600 font-mono leading-relaxed overflow-x-auto">{`[
+  {
+    "id": 1,
+    "name": "1GB, 24hrs",
+    "ussd": "*180*5*2*pn*7*1#",
+    "sellingPrice": 99.0,
+    "safaricomPrice": 99.0,
+    "category": "DATA",
+    "status": "1"
+  },
+  ...
+]`}</pre>
+            <p className="text-xs text-gray-400 mt-2">
+              ℹ️ Both <strong>pn</strong> and <strong>{"{pn}"}</strong> are accepted in ussd codes.
+              Extra fields (paymentSim, type, commission etc.) are safely ignored.
+              Existing products are updated; new IDs are inserted.
+            </p>
           </div>
+
+          {/* JSON preview / manual paste */}
+          {jsonText && (
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1">
+                JSON Preview
+              </label>
+              <textarea
+                className="input font-mono text-xs resize-none"
+                rows={6}
+                value={jsonText}
+                onChange={(e) => {
+                  setJsonText(e.target.value);
+                  setResult(null);
+                  setError("");
+                  try {
+                    const p = JSON.parse(e.target.value);
+                    setPreviewCount(Array.isArray(p) ? p.length : null);
+                  } catch {
+                    setPreviewCount(null);
+                  }
+                }}
+              />
+            </div>
+          )}
         </div>
 
-        <div className="p-6 border-t border-gray-100 flex gap-3">
+        {/* Footer */}
+        <div className="p-6 border-t border-gray-100 flex gap-3 shrink-0">
           <button onClick={onClose} className="btn-secondary flex-1">
-            Cancel
+            {result ? "Close" : "Cancel"}
           </button>
-          <button
-            onClick={handleSubmit}
-            disabled={saving}
-            className="btn-primary flex-1 flex items-center justify-center gap-2"
-          >
-            {saving ? (
-              <RefreshCw className="w-4 h-4 animate-spin" />
-            ) : (
-              <Upload className="w-4 h-4" />
-            )}
-            Apply Updates
-          </button>
+          {!result && (
+            <button
+              onClick={handleSubmit}
+              disabled={saving || !jsonText.trim()}
+              className="btn-primary flex-1 flex items-center justify-center gap-2"
+            >
+              {saving ? (
+                <RefreshCw className="w-4 h-4 animate-spin" />
+              ) : (
+                <Upload className="w-4 h-4" />
+              )}
+              {saving
+                ? "Importing…"
+                : previewCount
+                ? `Import ${previewCount} Products`
+                : "Import Products"}
+            </button>
+          )}
         </div>
       </div>
     </div>
@@ -415,9 +483,7 @@ export default function AdminProductsPage() {
   const adminKey = getAdminKey();
   const [products, setProducts] = useState<Product[]>([]);
   const [loading, setLoading] = useState(true);
-  const [editProduct, setEditProduct] = useState<Product | null | undefined>(
-    undefined
-  );
+  const [editProduct, setEditProduct] = useState<Product | null | undefined>(undefined);
   const [showBulk, setShowBulk] = useState(false);
   const [deleteConfirm, setDeleteConfirm] = useState<number | null>(null);
   const [toast, setToast] = useState("");
@@ -471,13 +537,15 @@ export default function AdminProductsPage() {
   };
 
   const categoryColors: Record<string, string> = {
-    DATA: "bg-blue-100 text-blue-700",
+    DATA:    "bg-blue-100 text-blue-700",
     AIRTIME: "bg-green-100 text-green-700",
-    SMS: "bg-purple-100 text-purple-700",
+    SMS:     "bg-purple-100 text-purple-700",
+    MINUTES: "bg-orange-100 text-orange-700",
   };
 
   return (
     <div className="space-y-6">
+
       {/* Toast */}
       {toast && (
         <div className="fixed top-6 right-6 z-50 bg-gray-900 text-white text-sm px-4 py-3 rounded-xl shadow-lg flex items-center gap-2">
@@ -494,7 +562,7 @@ export default function AdminProductsPage() {
             className="btn-secondary flex items-center gap-2 text-sm"
           >
             <Upload className="w-4 h-4" />
-            Bulk USSD Update
+            Bulk Import Products
           </button>
           <button
             onClick={() => setEditProduct(null)}
@@ -531,8 +599,7 @@ export default function AdminProductsPage() {
               </thead>
               <tbody className="divide-y divide-gray-100">
                 {products.map((p) => {
-                  const margin =
-                    Number(p.selling_price) - Number(p.cost_price);
+                  const margin = Number(p.selling_price) - Number(p.cost_price);
                   const marginPct =
                     Number(p.selling_price) > 0
                       ? ((margin / Number(p.selling_price)) * 100).toFixed(0)
@@ -555,9 +622,7 @@ export default function AdminProductsPage() {
                         )}
                       </td>
                       <td className="px-4 py-3">
-                        <span
-                          className={`badge ${categoryColors[p.category] ?? "bg-gray-100 text-gray-600"}`}
-                        >
+                        <span className={`badge ${categoryColors[p.category] ?? "bg-gray-100 text-gray-600"}`}>
                           {p.category}
                         </span>
                       </td>
@@ -632,7 +697,7 @@ export default function AdminProductsPage() {
 
             {products.length === 0 && (
               <div className="text-center py-16 text-gray-400">
-                No products yet. Click &quot;New Product&quot; to create one.
+                No products yet. Click &quot;New Product&quot; to create one or use Bulk Import.
               </div>
             )}
           </div>
@@ -652,7 +717,7 @@ export default function AdminProductsPage() {
       )}
 
       {showBulk && (
-        <BulkUssdModal
+        <BulkImportModal
           onClose={() => setShowBulk(false)}
           onSaved={fetchProducts}
         />
